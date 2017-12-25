@@ -24,6 +24,7 @@ from sklearn.metrics import confusion_matrix
 from sklearn.externals import joblib
 import docopt
 
+arguments = {'--model':None,'--plot':None,'--data':None,'--plot':None,'--pca':None,'--normalize':None}
 class sample_file:
     def __init__(self, filename):
         self.filename = filename
@@ -136,7 +137,108 @@ def get_samples(foldername, filter=None):
 
     return samples
 
-if __name__ == '__main__':
+def train_model():
+    filters = {'dancing': 0, 'walking': 1, 'sitting':2}
+    training = dataset('../datasets/training', filters)
+    
+    ###Training using the model
+    svr = svm.SVC()
+    exponential_range = [pow(10, i) for i in range(-4, 1)]
+    parameters = {'kernel':['linear', 'rbf'], 'C':exponential_range, 'gamma':exponential_range}
+    clf = grid_search.GridSearchCV(svr, parameters, n_jobs=8, verbose=True)
+    clf.fit(training.data, training.target)
+    joblib.dump(clf, '../models/1s_6sps.pkl')
+    print(clf)
+    
+    print('best_score:', clf.best_score_, 'best C:', clf.best_estimator_.C, 'best gamma:', clf.best_estimator_.gamma)
+    validation = dataset('../datasets/validation')
+
+    predicted = clf.predict(validation.data)
+    truedata =  list(map(lambda x: filters[x], validation.activities))
+    
+    ###Calculating Precision and recall
+    precision=precision_score(truedata, predicted, average='macro')
+    recall=recall_score(truedata, predicted, average='macro')
+
+    print("predicted = ", predicted)
+    print("truedata  = ", truedata)
+    print("macro precision = ", precision)
+    print("macro recall = ", recall)
+    ###----------------------------------------------------------------------------------
+    
+    # Write precision/recall to a file so that we can se how
+    # the precision of the project's output improves over time.
+    ts = time.time()
+    record = str(ts) + ", " +  str(precision) + ", " +  str(recall) + "\n";
+    with open("../logs/precision-recall-time-evolution.csv", "a") as myfile:
+        myfile.write(record)
+    ###----------------------------------------------------------------------------------
+
+    ### Computing confusion matrix
+    cm = confusion_matrix(truedata, predicted)
+    print("confusion:")
+    print(cm)
+    ###----------------------------------------------------------------------------------
+    
+    ##Calculating Classifier Performance
+    from sklearn.metrics import classification_report
+    y_true = truedata
+    y_pred = predicted
+    print(len(y_pred))
+    print(len(y_true))
+    print("--------------")
+    print(y_true)
+    print(y_pred)
+    labels = ['0','1','2']
+    target_names = ['Dancing', 'Walking', 'Sitting']
+    print(classification_report(y_true, y_pred, target_names=target_names, labels=labels))
+    ###-----------------------------------------------------------------------------------
+
+def predict_model(model_file, data_feed):
+    arguments.update({'--model': model_file})
+    clf = joblib.load(arguments['--model'])
+    last_touched = 0
+    print("Monitoring file " + data_feed)
+    while True:
+        try:
+            if (os.path.isdir(data_feed)):
+                #max(os.listdir('.'), )
+                all_files_in_df = map(lambda f: os.path.join(data_feed, f), os.listdir(data_feed))
+                data_file = max(all_files_in_df, key = os.path.getmtime)
+            else:
+                data_file = data_feed
+
+            # get last modified time
+            stat_result = os.stat(data_file)
+            # file changed?
+            if stat_result.st_mtime != last_touched:
+                    sample = sample_file(data_file)
+                    sample.keep_last_lines(180)
+                    samples = sample.get_samples()
+                    sys.stdout.write("Classification: ")
+
+                    pr = clf.predict(samples)
+                    with open('../data-gathering/classification', 'w') as f:
+                        f.truncate()
+                        f.write(str(pr))
+
+                    print(pr)
+            else:
+                print("File didn't change")
+
+            last_touched = stat_result.st_mtime
+        except:
+            print("Unexpected error", sys.exc_info()[0])
+
+        time.sleep(1)
+    
+if __name__ == '__main2__':
+    #arguments = {'--model':None,'--plot':None,'--data':None,'--plot':None,'--pca':None,'--normalize':None}
+    #train_model()
+    predict_model("../models/1s_6sps.pkl", "../data-gathering/raw-data/")
+    
+
+if __name__ == '__main1__':
     arguments = docopt.docopt(__doc__)
     filters = {'dancing': 0, 'walking': 1, 'sitting':2}
     if arguments['--model']:
